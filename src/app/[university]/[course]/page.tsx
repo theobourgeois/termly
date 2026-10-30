@@ -32,6 +32,18 @@ import { getUniversity, universityPath } from "@/lib/university";
 
 type Props = { params: Promise<{ university: string; course: string }> };
 
+/**
+ * No course is built ahead; each renders on its first visit and is cached from then on (revalidated
+ * daily, and when a moderator changes its reviews or syllabi). Without this the page renders on every
+ * request, loading the whole catalog on whichever server instance gets it.
+ */
+export function generateStaticParams() {
+    return [];
+}
+
+/** A first visit on a fresh server instance loads the university's catalog, which can take a while. */
+export const maxDuration = 60;
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
     const { university, course: code } = await params;
     const course = await getCourse(university, code);

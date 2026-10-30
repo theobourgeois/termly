@@ -92,7 +92,7 @@ export async function importTimetable(db, university, timetable) {
         .sort();
     if (failed.size) log(`Keeping stored sections for subjects that failed: ${[...failed].join(", ")}`);
 
-    const totals = { sections: 0, deleted: 0 };
+    const totals = { sections: 0, changed: 0, deleted: 0 };
     for (const { term, codes } of importChunks(subjectCodes, timetable)) {
         const inChunk = new Set(codes);
         const courses = timetable.courses.filter((course) => inChunk.has(course.subject_code));
@@ -106,13 +106,18 @@ export async function importTimetable(db, university, timetable) {
                 sections: timetable.sections.filter((section) => section.term === term && courseCodes.has(section.course)),
             },
         });
+        // Only new or changed sections are written; the rest are left alone.
+        const changed = result.changed ?? result.sections;
         totals.sections += result.sections;
+        totals.changed += changed;
         totals.deleted += result.deleted;
-        log(`Saved ${term} ${codes[0]}-${codes.at(-1)}: ${result.sections} sections, ${result.deleted} removed`);
+        log(`Saved ${term} ${codes[0]}-${codes.at(-1)}: ${result.sections} sections (${changed} new or changed), ${result.deleted} removed`);
     }
 
     await db.rpc("list_terms", { p_university: university, p_codes: listedCodes });
-    log(`Timetable saved: ${totals.sections} sections, ${totals.deleted} removed; listed ${listedCodes.join(", ")}`);
+    log(
+        `Timetable saved: ${totals.sections} sections (${totals.changed} new or changed), ${totals.deleted} removed; listed ${listedCodes.join(", ")}`,
+    );
 }
 
 /** Groups whole term/subject scopes, targeting SECTIONS_PER_IMPORT sections per import. */

@@ -5,17 +5,18 @@ import { accentCss } from "@/lib/accent";
 import { AppShell } from "@/components/layout/app-shell";
 import { UniversityProviders } from "@/components/providers";
 import { getCourseIndex, getCurrentTerm, getTerms } from "@/lib/data";
-import { DEFAULT_UNIVERSITY, getUniversity } from "@/lib/university";
+import { getUniversity } from "@/lib/university";
 
 type Props = { children: React.ReactNode; params: Promise<{ university: string }> };
 
 /**
- * Only Dal's pages are built ahead: building every university's at once loads all their catalogs
- * together and the database starts refusing reads. The others render on their first visit and are
- * cached from then on. An id that isn't a university is a 404 (below).
+ * No university's pages are built ahead: they render on their first visit and are cached from then
+ * on. Building them ahead made every deploy depend on the database, and when Supabase is throttled
+ * the build's catalog reads time out and the deploy fails (Oct 22 to 29). An id that isn't a
+ * university is a 404 (below).
  */
 export function generateStaticParams() {
-    return [{ university: DEFAULT_UNIVERSITY }];
+    return [];
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
