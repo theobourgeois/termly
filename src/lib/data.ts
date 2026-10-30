@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { cache } from "react";
-import { CATALOG_DIRECTORY, CATALOG_SOURCES, catalogFileName } from "./catalog-sources.mjs";
+import { CATALOG_SOURCES, catalogFileName } from "./catalog-sources.mjs";
 import { days as appDays, type Term } from "./constants";
 import type { ExamSchedule } from "./exams";
 import { summarizeRating, type RatingSummary } from "./instructors";
@@ -404,7 +404,9 @@ async function readFromSupabase(university: string): Promise<CatalogRows> {
 async function readFromFile(university: string): Promise<CatalogRows | null> {
     if (!getUniversity(university)) return null;
     try {
-        const file = await readFile(join(process.cwd(), CATALOG_DIRECTORY, catalogFileName(university)));
+        // "catalogs" spelled out: from a variable, the build can't tell which folder this reads, so it
+        // bundles the whole project into every function and the deploy fails on their size.
+        const file = await readFile(join(process.cwd(), "catalogs", catalogFileName(university)));
         return JSON.parse(gunzipSync(file).toString()) as CatalogRows;
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
