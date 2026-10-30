@@ -75,7 +75,7 @@ async function openSession(base) {
 const uniqueSessionId = () => `ds${Math.random().toString(36).slice(2, 12)}`;
 
 /** Every section in a term. A fresh session per term, since Banner keeps the chosen term in the session. */
-async function searchTerm(base, term) {
+async function searchTerm(base, term, pageSize = PAGE_SIZE) {
     const request = await openSession(base);
     const session = uniqueSessionId();
     await request("term/search?mode=search", {
@@ -90,14 +90,14 @@ async function searchTerm(base, term) {
         },
     });
     const sections = [];
-    for (let offset = 0; ; offset += PAGE_SIZE) {
+    for (let offset = 0; ; offset += pageSize) {
         const params = new URLSearchParams({
             txt_term: term,
             startDatepicker: "",
             endDatepicker: "",
             uniqueSessionId: session,
             pageOffset: String(offset),
-            pageMaxSize: String(PAGE_SIZE),
+            pageMaxSize: String(pageSize),
             sortColumn: "subjectDescription",
             sortDirection: "asc",
         });
@@ -186,6 +186,8 @@ function mostCommon(values) {
  * @param {object} config
  * @param {string} config.baseUrl ".../StudentRegistrationSsb/ssb"
  * @param {number} [config.recentTerms] How many of the newest terms to look at (default 6).
+ * @param {number} [config.pageSize] Sections per search page (default 500). Some servers (UNBC) fail on
+ *   pages that big.
  * @param {number} [config.keepEndedDays] Keep a term this many days after it ends (default 120).
  * @param {(term: {code: string, description: string, starts_on: string, ends_on: string}) => {name: string, season: string, year: number}} config.describeTerm
  * @param {(listing: {code: string, description: string}) => string | null} [config.roughEnd] When the term ends
@@ -201,6 +203,7 @@ function mostCommon(values) {
 export function banner9({
     baseUrl,
     recentTerms = 6,
+    pageSize = PAGE_SIZE,
     keepEndedDays = 120,
     termsFrom = "classSearch",
     includeTerm,
@@ -245,7 +248,7 @@ export function banner9({
                 request: termRequest,
                 sections: found,
                 subjects: termSubjects,
-            } = await searchTerm(baseUrl, listing.code);
+            } = await searchTerm(baseUrl, listing.code, pageSize);
             if (found.length === 0) {
                 log(`${listing.code}: no sections`);
                 continue;
