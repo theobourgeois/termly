@@ -1,6 +1,10 @@
 import "server-only";
 
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { cache } from "react";
+import { CATALOG_DIRECTORY, CATALOG_SOURCES, catalogFileName } from "./catalog-sources.mjs";
 import { days as appDays, type Term } from "./constants";
 import type { ExamSchedule } from "./exams";
 import { summarizeRating, type RatingSummary } from "./instructors";
@@ -71,6 +75,34 @@ type CourseRow = {
     description: string | null;
 };
 
+/** A university's catalog as stored: what's read from Supabase or from its catalog file. */
+type CatalogRows = {
+    terms: { code: string; name: string; starts_on: string; ends_on: string; is_listed: boolean }[];
+    subjects: Subject[];
+    courses: CourseRow[];
+    sections: SectionRow[];
+    prerequisites: { course: string; required: string }[];
+    ratings: {
+        match_name: string;
+        first_name: string;
+        last_name: string;
+        profile_url: string | null;
+        rating: number | null;
+        difficulty: number | null;
+        would_take_again: number | null;
+        rating_count: number;
+    }[];
+    exams: {
+        term: Term;
+        course: string;
+        section: string;
+        starts_at: string;
+        ends_at: string | null;
+        location: string | null;
+    }[];
+    rooms: { id: string; campus: string | null; building: string; name: string }[];
+};
+
 type Catalog = {
     terms: TermInfo[];
     /** Listed term codes, oldest first. */
@@ -84,6 +116,8 @@ type Catalog = {
     /** Per term, each room's sessions. */
     roomSessions: Map<Term, Map<string, ClassSession[]>>;
     derived: Map<string, unknown>;
+    /** Read from this deployment's file, which can't change, so it never needs reading again. */
+    fromFile: boolean;
 };
 
 /** A session and the rooms it's held in. */
@@ -344,73 +378,54 @@ function buildCourses(
     return { courses, roomSessions };
 }
 
-async function loadCatalog(university: string): Promise<Catalog> {
+async function readFromSupabase(university: string): Promise<CatalogRows> {
     const db = publicClient();
+    const read = <T,>({ source, columns, order, filters }: {
+        source: string;
+        columns: string;
+        order: string[];
+        filters?: Record<string, string>;
+    }) => readAll<T>(db, source, columns, university, order, filters);
 
-    const [termRows, subjectRows, courseRows, sectionRows, requisiteRows, ratingRows, examRows, roomRows] = await Promise.all([
-        readAll<{ code: string; name: string; starts_on: string; ends_on: string; is_listed: boolean }>(
-            db,
-            "terms",
-            "code, name, starts_on, ends_on, is_listed",
-            university,
-            ["starts_on", "code"],
-        ),
-        readAll<Subject>(db, "subjects", "code, name", university, ["code"]),
-        readAll<CourseRow>(db, "catalog_courses", "code, subject_code, number, title, credits, description", university, [
-            "code",
-        ]),
-        readAllById<SectionRow>(
-            db,
-            "catalog_sections",
-            "term, course, crn, section, type, kind, capacity, enrolled, meetings, instructors",
-            university,
-        ),
-        readAll<{ course: string; required: string }>(
-            db,
-            "course_requisite_codes",
-            "course, required",
-            university,
-            ["course", "required"],
-            { kind: "prerequisite" },
-        ),
-        readAll<{
-            match_name: string;
-            first_name: string;
-            last_name: string;
-            profile_url: string | null;
-            rating: number | null;
-            difficulty: number | null;
-            would_take_again: number | null;
-            rating_count: number;
-        }>(
-            db,
-            "instructor_rating_by_name",
-            "match_name, first_name, last_name, profile_url, rating, difficulty, would_take_again, rating_count",
-            university,
-            ["match_name"],
-        ),
-        readAll<{
-            term: Term;
-            course: string;
-            section: string;
-            starts_at: string;
-            ends_at: string | null;
-            location: string | null;
-        }>(
-            db,
-            "exam_schedule",
-            "term, course, section, starts_at, ends_at, location",
-            university,
-            ["term", "course", "section"],
-        ),
-        readAll<{ id: string; campus: string | null; building: string; name: string }>(
-            db,
-            "rooms",
-            "id, campus, building, name",
-            university,
-            ["id"],
-        ),
+    const [terms, subjects, courses, sections, prerequisites, ratings, exams, rooms] = await Promise.all([
+        read<CatalogRows["terms"][number]>(CATALOG_SOURCES.terms),
+        read<Subject>(CATALOG_SOURCES.subjects),
+        read<CourseRow>(CATALOG_SOURCES.courses),
+        readAllById<SectionRow>(db, CATALOG_SOURCES.sections.source, CATALOG_SOURCES.sections.columns, university),
+        read<CatalogRows["prerequisites"][number]>(CATALOG_SOURCES.prerequisites),
+        read<CatalogRows["ratings"][number]>(CATALOG_SOURCES.ratings),
+        read<CatalogRows["exams"][number]>(CATALOG_SOURCES.exams),
+        read<CatalogRows["rooms"][number]>(CATALOG_SOURCES.rooms),
     ]);
+    return { terms, subjects, courses, sections, prerequisites, ratings, exams, rooms };
+}
+
+/** The university's catalog file in this deployment, or null when it has none (in dev, or a new university). */
+async function readFromFile(university: string): Promise<CatalogRows | null> {
+    if (!getUniversity(university)) return null;
+    try {
+        const file = await readFile(join(process.cwd(), CATALOG_DIRECTORY, catalogFileName(university)));
+        return JSON.parse(gunzipSync(file).toString()) as CatalogRows;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            console.error(`Couldn't read the ${university} catalog file; reading Supabase`, error);
+        }
+        return null;
+    }
+}
+
+async function loadCatalog(university: string): Promise<Catalog> {
+    const file = await readFromFile(university);
+    const {
+        terms: termRows,
+        subjects: subjectRows,
+        courses: courseRows,
+        sections: sectionRows,
+        prerequisites: requisiteRows,
+        ratings: ratingRows,
+        exams: examRows,
+        rooms: roomRows,
+    } = file ?? (await readFromSupabase(university));
 
     const terms = termRows.map((row) => ({
         code: row.code,
@@ -466,29 +481,41 @@ async function loadCatalog(university: string): Promise<Catalog> {
         rooms,
         roomSessions,
         derived: new Map(),
+        fromFile: file !== null,
     };
 }
 
 const snapshots = new Map<string, { catalog: Catalog; expiresAt: number }>();
 const loading = new Map<string, Promise<Catalog>>();
+const failures = new Map<string, { error: unknown; retryAt: number }>();
 
 /**
- * A university's catalog, reloaded every few minutes. If a reload fails the last good catalog keeps
- * being served, so a Supabase hiccup doesn't take the site down.
+ * A university's catalog, reloaded every few minutes unless it came from a file. If a reload fails the
+ * last good catalog keeps being served, so a Supabase hiccup doesn't take the site down. With nothing
+ * to serve, requests fail straight away for a minute instead of each adding to a busy database's load.
  */
 function currentCatalog(university: string): Promise<Catalog> {
     const snapshot = snapshots.get(university);
     if (snapshot && Date.now() < snapshot.expiresAt) return Promise.resolve(snapshot.catalog);
+    const failure = failures.get(university);
+    if (!snapshot && failure && Date.now() < failure.retryAt) return Promise.reject(failure.error);
     let pending = loading.get(university);
     if (!pending) {
         pending = loadCatalog(university)
             .then((catalog) => {
-                snapshots.set(university, { catalog, expiresAt: Date.now() + FRESH_FOR_MS });
+                snapshots.set(university, {
+                    catalog,
+                    expiresAt: catalog.fromFile ? Infinity : Date.now() + FRESH_FOR_MS,
+                });
+                failures.delete(university);
                 return catalog;
             })
             .catch((error) => {
                 const previous = snapshots.get(university);
-                if (!previous) throw error;
+                if (!previous) {
+                    failures.set(university, { error, retryAt: Date.now() + RETRY_AFTER_FAILURE_MS });
+                    throw error;
+                }
                 console.error(`Couldn't reload the ${university} catalog; serving the previous one`, error);
                 previous.expiresAt = Date.now() + RETRY_AFTER_FAILURE_MS;
                 return previous.catalog;
@@ -501,7 +528,7 @@ function currentCatalog(university: string): Promise<Catalog> {
 
 const getCatalog = cache(currentCatalog);
 
-/** Forgets the in-memory catalogs so the next request reads Supabase again (after a data refresh). */
+/** Forgets the in-memory catalogs so the next request reads them again (after a data refresh). */
 export function clearCatalog() {
     snapshots.clear();
 }
