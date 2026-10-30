@@ -19,7 +19,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
                 changeFrequency: "daily" as const,
                 priority: 0.7,
             })),
-            ...(await getCourseCodes(id)).map((code) => ({
+            // A busy database shouldn't fail the deploy: that university's courses are left out until
+            // the next daily rebuild.
+            ...(
+                await getCourseCodes(id).catch((error) => {
+                    console.error(`Couldn't list ${id}'s courses for the sitemap`, error);
+                    return [];
+                })
+            ).map((code) => ({
                 url: url(universityPath(id, `/${code}`)),
                 changeFrequency: "daily" as const,
                 priority: 0.6,
