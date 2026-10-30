@@ -97,6 +97,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 export function isBusy(error) {
     if (error instanceof TypeError) return true;
+    // The API answers a 500 with no Postgres code when it can't get an answer from the database.
+    if (error.status === 500 && !error.code) return true;
     return BUSY_CODES.has(error.code) || GATEWAY_STATUSES.has(error.status);
 }
 
@@ -136,7 +138,7 @@ export function isUnreachable(error) {
     return false;
 }
 
-function loadEnv() {
+export function loadEnv() {
     const env = {};
     const file = path.join(ROOT, ".env.local");
     if (fs.existsSync(file)) {
@@ -180,6 +182,10 @@ export function connect({ readOnly = false } = {}) {
         return response;
     }
 
+    /** A GET's rows, trying again when the database is too busy. */
+    const read = (pathname, init) =>
+        retryBusy(`read ${pathname.split("?")[0]}`, async () => (await request(pathname, init)).json());
+
     return {
         /** Calls one of the import_* functions, trying again when the database is too busy. */
         async rpc(name, args) {
@@ -198,12 +204,31 @@ export function connect({ readOnly = false } = {}) {
             const rows = [];
             for (;;) {
                 const params = new URLSearchParams({ select: columns, order, ...filters });
-                const response = await request(`${table}?${params}`, {
+                const page = await read(`${table}?${params}`, {
                     headers: { Range: `${rows.length}-${rows.length + PAGE_SIZE - 1}` },
                 });
-                const page = await response.json();
                 if (page.length === 0) return rows;
                 rows.push(...page);
+            }
+        },
+
+        /**
+         * Like selectAll, for a view that builds JSON per row: each page starts after the last id,
+         * so nothing is built for the rows before it. Leaves the ids out of what it returns.
+         */
+        async selectAllByKey(table, columns, filters = {}) {
+            const rows = [];
+            let last = null;
+            for (;;) {
+                const params = new URLSearchParams({ select: `id,${columns}`, order: "id", limit: String(PAGE_SIZE), ...filters });
+                if (last) params.set("id", `gt.${last}`);
+                const page = await read(`${table}?${params}`);
+                if (page.length === 0) return rows;
+                last = page.at(-1).id;
+                for (const row of page) {
+                    delete row.id;
+                    rows.push(row);
+                }
             }
         },
 
@@ -212,8 +237,7 @@ export function connect({ readOnly = false } = {}) {
             const params = new URLSearchParams({ select: columns, ...filters });
             if (order) params.set("order", order);
             if (limit) params.set("limit", String(limit));
-            const response = await request(`${table}?${params}`);
-            return response.json();
+            return read(`${table}?${params}`);
         },
 
         /** Adds a row and returns it. */
@@ -234,10 +258,12 @@ export function connect({ readOnly = false } = {}) {
 
         async count(table, filters = {}) {
             const params = new URLSearchParams({ select: "*", ...filters });
-            const response = await request(`${table}?${params}`, {
-                method: "HEAD",
-                headers: { Prefer: "count=exact", Range: "0-0" },
-            });
+            const response = await retryBusy(`count ${table}`, () =>
+                request(`${table}?${params}`, {
+                    method: "HEAD",
+                    headers: { Prefer: "count=exact", Range: "0-0" },
+                }),
+            );
             return Number(response.headers.get("content-range")?.split("/")[1] ?? 0);
         },
     };

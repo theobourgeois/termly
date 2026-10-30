@@ -9,6 +9,8 @@ const nextConfig: NextConfig = {
   // Social images read the font and the university's logo from disk.
   outputFileTracingIncludes: {
     "/**/opengraph-image": ["./src/app/fonts/og/**", "./public/universities/**"],
+    // Catalogs are read from disk; see src/scripts/node/download-catalogs.js.
+    "/**": ["./catalogs/**"],
   },
   async redirects() {
     return [{ source: "/api/sitemap", destination: "/sitemap.xml", permanent: true }];

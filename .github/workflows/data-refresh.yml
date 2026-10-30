@@ -98,18 +98,41 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node src/scripts/node/triage.js
 
-  # Pages are cached for a day; this shows the new data straight away. Skipped until the
-  # REVALIDATE_SECRET and SITE_URL secrets are set.
-  revalidate:
+  # Each university's catalog as one file, once the refreshes are done so these reads don't compete
+  # with them. See src/scripts/node/publish-catalogs.js.
+  publish:
     needs: refresh
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Publish the catalog files
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: node src/scripts/node/publish-catalogs.js
+
+  # A new deployment picks up the catalog files, and starts with no cached pages. Without the
+  # VERCEL_DEPLOY_HOOK secret, pages are refreshed in place and still read Supabase. Without
+  # REVALIDATE_SECRET and SITE_URL either, they refresh within a day.
+  revalidate:
+    needs: [refresh, publish]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Refresh the site
         env:
+          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
           REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
           SITE_URL: ${{ secrets.SITE_URL }}
         run: |
+          if [ -n "$VERCEL_DEPLOY_HOOK" ]; then
+            curl --fail --silent --show-error -X POST "$VERCEL_DEPLOY_HOOK"
+            exit 0
+          fi
           if [ -z "$REVALIDATE_SECRET" ] || [ -z "$SITE_URL" ]; then
             echo "REVALIDATE_SECRET or SITE_URL isn't set; pages refresh within a day"
             exit 0

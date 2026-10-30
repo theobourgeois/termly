@@ -24,6 +24,15 @@ test("gives up after the last delay", async () => {
     assert.equal(calls, 3);
 });
 
+test("tries again after a 500 with no Postgres code, as the API sends when the database stalls", async () => {
+    let calls = 0;
+    const result = await retryBusy("count catalog_sections", async () => {
+        if (++calls < 2) throw httpError({ status: 500 });
+        return 9066;
+    }, { delays: [1], sleep: async () => {} });
+    assert.equal(result, 9066);
+});
+
 test("does not repeat a call the database refused for what was sent", async () => {
     let calls = 0;
     const refused = Object.assign(new Error("Duplicate sections"), { status: 400, code: "P0001" });

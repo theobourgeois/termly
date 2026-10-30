@@ -45,3 +45,6 @@ __pycache__/
 
 # clerk configuration (can include secrets)
 /.clerk/
+
+# Catalog files, downloaded by the build
+/catalogs/
