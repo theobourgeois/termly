@@ -12,6 +12,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ cour
   return new Response(JSON.stringify(course), {
     headers: {
       'Content-Type': 'application/json',
+      // Cached at Vercel's edge so adding a course doesn't wait on a server loading the catalog.
+      'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
