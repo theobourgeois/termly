@@ -29,6 +29,8 @@ function roughEnd({ description }) {
 
 export const { scrapeTimetable, scrapeCourseDetails } = banner9({
     baseUrl: "https://selfservice.unbc.ca/StudentRegistrationSsb/ssb",
+    // Since October 2026 the search answers 500 for pages of about 500 sections.
+    pageSize: 100,
     describeTerm,
     roughEnd,
     // Online classes meet in a building called ONLINE; theses have "No Scheduled Meeting Times".
