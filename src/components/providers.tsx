@@ -11,7 +11,6 @@ import { UniversityProvider, useUniversity } from "@/components/university";
 import { fetchCourse } from "@/hooks/use-course-details";
 import type { Term } from "@/lib/constants";
 import type { TermInfo } from "@/lib/terms";
-import type { CourseSummary } from "@/lib/types";
 import { useLibraryStoreApi } from "@/store/library-store";
 import { isLegacySession, useScheduleStoreApi } from "@/store/schedule-store";
 import { ScheduleSync } from "@/store/schedule-sync";
@@ -62,18 +61,17 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
 type UniversityProvidersProps = {
     university: string;
-    courseIndex: CourseSummary[];
     terms: TermInfo[];
     currentTerm: Term;
     children: React.ReactNode;
 };
 
 /** Everything scoped to one university: its terms, courses, search and the student's saved data there. */
-export function UniversityProviders({ university, courseIndex, terms, currentTerm, children }: UniversityProvidersProps) {
+export function UniversityProviders({ university, terms, currentTerm, children }: UniversityProvidersProps) {
     return (
         <UniversityProvider id={university}>
             <TermsProvider terms={terms} current={currentTerm}>
-                <CourseIndexProvider courses={courseIndex}>
+                <CourseIndexProvider>
                     <SearchDialogProvider>
                         <StoreHydration />
                         <UpgradeSavedSchedule />

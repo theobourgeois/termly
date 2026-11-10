@@ -186,7 +186,7 @@ function EditableReview({ review }: { review: Review }) {
 
 /** The Reviews tab: average scores, a filter by instructor, the composer and every review. */
 export function CourseReviews() {
-    const { reviews, status, rmpReviews } = useReviews();
+    const { reviews, status, rmpSummary } = useReviews();
     const [instructor, setInstructor] = useState(ALL);
     const shown = instructor === ALL ? reviews : reviews.filter((review) => review.instructor === instructor);
     const page = usePaged(shown, PAGE_SIZE);
@@ -220,7 +220,7 @@ export function CourseReviews() {
 
             <Composer />
 
-            {status === "ready" && reviews.length === 0 && rmpReviews.length === 0 && (
+            {status === "ready" && reviews.length === 0 && rmpSummary.total === 0 && (
                 <EmptyState title="No reviews yet" description="Be the first to say how this course went." />
             )}
 

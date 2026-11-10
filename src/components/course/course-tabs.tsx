@@ -10,8 +10,8 @@ type CourseTabsProps = Record<CourseTab, React.ReactNode> & { aside: React.React
 /** Overview / Schedule / Reviews, with the course details column beside every tab. */
 export function CourseTabs({ overview, schedule, reviews, aside }: CourseTabsProps) {
     const { tab, setTab } = useCourse();
-    const { reviews: list, status, rmpReviews } = useReviews();
-    const reviewCount = (status === "ready" ? list.length : 0) + rmpReviews.length;
+    const { reviews: list, status, rmpSummary } = useReviews();
+    const reviewCount = (status === "ready" ? list.length : 0) + rmpSummary.total;
 
     return (
         <Tabs value={tab} onValueChange={(value) => setTab(value as CourseTab)} className="mt-8">

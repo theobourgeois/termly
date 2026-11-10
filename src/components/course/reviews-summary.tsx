@@ -22,11 +22,11 @@ function LatestReview({ text, caption }: { text: string; caption: string }) {
  * students said on RateMyProfessors.
  */
 export function ReviewsSummary() {
-    const { reviews, status, rmpReviews } = useReviews();
+    const { reviews, status, rmpReviews, rmpSummary } = useReviews();
     const { setTab } = useCourse();
-    if (status === "loading" || (status === "unavailable" && rmpReviews.length === 0)) return null;
+    if (status === "loading" || (status === "unavailable" && rmpSummary.total === 0)) return null;
 
-    const total = reviews.length + rmpReviews.length;
+    const total = reviews.length + rmpSummary.total;
     const [latest] = reviews;
     const latestRmp = rmpReviews.find((review) => review.review_text);
 
@@ -46,16 +46,16 @@ export function ReviewsSummary() {
                         text={latest.review_text}
                         caption={`Latest review, ${formatReviewDate(latest.created_at)} with ${latest.instructor}`}
                     />
-                    {rmpReviews.length > 0 && (
+                    {rmpSummary.total > 0 && (
                         <p className="mt-3 text-[13px] text-fg-subtle">
-                            Plus {rmpReviews.length} from RateMyProfessors on the Reviews tab.
+                            Plus {rmpSummary.total} from RateMyProfessors on the Reviews tab.
                         </p>
                     )}
                 </>
-            ) : rmpReviews.length > 0 ? (
+            ) : rmpSummary.total > 0 ? (
                 <>
                     <div className="mt-4">
-                        <RmpScoresSummary reviews={rmpReviews} />
+                        <RmpScoresSummary averages={rmpSummary.averages} />
                     </div>
                     {latestRmp?.review_text && (
                         <LatestReview

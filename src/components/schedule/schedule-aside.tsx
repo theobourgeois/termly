@@ -55,9 +55,11 @@ export function ScheduleAside({ schedule, exams }: ScheduleAsideProps) {
                                     className="flex justify-between text-[14.5px] font-bold hover:underline"
                                 >
                                     {formatCourseCode(code)}
-                                    <span className="text-[13.5px] font-medium text-fg-subtle">
-                                        {byCode.get(code)?.creditHours} cr
-                                    </span>
+                                    {byCode.has(code) && (
+                                        <span className="text-[13.5px] font-medium text-fg-subtle">
+                                            {byCode.get(code)!.creditHours} cr
+                                        </span>
+                                    )}
                                 </Link>
                                 <p className="truncate text-[13.5px] font-medium text-fg-muted">
                                     {byCode.get(code)?.title}

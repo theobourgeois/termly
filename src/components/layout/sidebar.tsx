@@ -102,7 +102,7 @@ function ScheduleSection({ onNavigate }: { onNavigate?: () => void }) {
 
     return (
         <>
-            <SectionHeading aside={codes.length > 0 && `${credits} ${creditLabel.toLowerCase()}`}>
+            <SectionHeading aside={codes.length > 0 && credits !== null && `${credits} ${creditLabel.toLowerCase()}`}>
                 {termLabel(term)}
             </SectionHeading>
             {codes.length === 0 ? (
@@ -142,18 +142,21 @@ function OtherTermsSection({ onNavigate }: { onNavigate?: () => void }) {
     const { creditLabel } = useUniversity();
     const pagePath = useHref();
     const router = useRouter();
-    const { byCode } = useCourseIndex();
+    const { byCode, loaded } = useCourseIndex();
     const plannedTerm = usePlannedTerm();
     const sessions = useScheduleStore((state) => state.sessions);
     const setTerm = useScheduleStore((state) => state.setTerm);
     const ready = useHydrated(useScheduleStoreApi());
     if (!ready) return null;
 
-    const creditsIn = (term: Term) =>
-        totalCredits(
-            sessions.filter((session) => session.term === term),
-            (code) => byCode.get(code)?.creditHours,
-        );
+    /** "9 credits", "Empty", or nothing while the course index (which has each course's credits) loads. */
+    const summaryOf = (term: Term) => {
+        const inTerm = sessions.filter((session) => session.term === term);
+        if (inTerm.length === 0) return "Empty";
+        if (!loaded) return null;
+        const credits = totalCredits(inTerm, (code) => byCode.get(code)?.creditHours);
+        return credits > 0 ? `${credits} ${creditLabel.toLowerCase()}` : "Empty";
+    };
 
     const openTerm = (term: Term) => {
         setTerm(term);
@@ -166,26 +169,21 @@ function OtherTermsSection({ onNavigate }: { onNavigate?: () => void }) {
             <SectionHeading>Other terms</SectionHeading>
             {termCodes
                 .filter((term) => term !== plannedTerm)
-                .map((term) => {
-                    const credits = creditsIn(term);
-                    return (
-                        <button
-                            key={term}
-                            type="button"
-                            onClick={() => openTerm(term)}
-                            // Some names are long ("Summer 2026 (May-August, graduate)"), so the row grows to fit them.
-                            className={cn(
-                                rowClass,
-                                "h-auto min-h-[34px] w-full justify-between gap-3 py-1.5 text-left text-fg-muted",
-                            )}
-                        >
-                            <span className="min-w-0 font-medium leading-snug">{termLabel(term)}</span>
-                            <span className="shrink-0 text-[13px] text-fg-subtle">
-                                {credits > 0 ? `${credits} ${creditLabel.toLowerCase()}` : "Empty"}
-                            </span>
-                        </button>
-                    );
-                })}
+                .map((term) => (
+                    <button
+                        key={term}
+                        type="button"
+                        onClick={() => openTerm(term)}
+                        // Some names are long ("Summer 2026 (May-August, graduate)"), so the row grows to fit them.
+                        className={cn(
+                            rowClass,
+                            "h-auto min-h-[34px] w-full justify-between gap-3 py-1.5 text-left text-fg-muted",
+                        )}
+                    >
+                        <span className="min-w-0 font-medium leading-snug">{termLabel(term)}</span>
+                        <span className="shrink-0 text-[13px] text-fg-subtle">{summaryOf(term)}</span>
+                    </button>
+                ))}
         </>
     );
 }

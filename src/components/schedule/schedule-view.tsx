@@ -114,7 +114,11 @@ export function ScheduleView({ exams }: { exams: ExamSchedule }) {
                 title={termLabel(term)}
                 titleAddon={<TermSwitcher term={term} />}
                 subtitle={
-                    ready && codes.length > 0 ? `${plural(codes.length, "course")}, ${credits} ${creditLabel.toLowerCase()}` : undefined
+                    ready && codes.length > 0
+                        ? [plural(codes.length, "course"), credits !== null && `${credits} ${creditLabel.toLowerCase()}`]
+                              .filter(Boolean)
+                              .join(", ")
+                        : undefined
                 }
             />
             <PageActions
