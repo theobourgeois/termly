@@ -2,7 +2,7 @@
 
 import { useTerms } from "@/components/current-term";
 import { SITE_NAME } from "@/lib/constants";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { EyeSlashIcon, FlagIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
@@ -15,17 +15,19 @@ import { SimpleTooltip } from "@/components/ui/tooltip";
 import { usePaged } from "@/hooks/use-paged";
 import { useIsModerator, useUser } from "@/hooks/use-user";
 import { formatReviewDate } from "@/lib/reviews";
-import { rmpAverages, type RmpReview } from "@/lib/rmp-reviews";
+import { RMP_PREVIEW_SIZE, rmpAverages, type RmpAverages, type RmpReview } from "@/lib/rmp-reviews";
 import { isSameInstructor } from "@/lib/syllabi";
 import { useReviews } from "./reviews-context";
 import { useHref } from "@/components/university";
 
-const PAGE_SIZE = 8;
+// The reviews sent with the page are exactly the first page shown.
+const PAGE_SIZE = RMP_PREVIEW_SIZE;
+const NO_SCORES = rmpAverages([]);
 const ALL = "__all";
 
 /** Average quality and difficulty, and how many would take the professor again, shown large. */
-export function RmpScoresSummary({ reviews }: { reviews: RmpReview[] }) {
-    const { quality, difficulty, takeAgain } = rmpAverages(reviews);
+export function RmpScoresSummary({ averages }: { averages: RmpAverages }) {
+    const { quality, difficulty, takeAgain } = averages;
     const scores = [
         quality !== null && { value: quality.toFixed(1), label: "quality" },
         difficulty !== null && { value: difficulty.toFixed(1), label: "difficulty" },
@@ -165,28 +167,32 @@ export function RmpReviewItem({ review, context, actions }: RmpReviewItemProps) 
 /** RateMyProfessors reviews that mention this course, below the site's own reviews on the Reviews tab. */
 export function RmpReviews() {
     const { label: termLabel } = useTerms();
-    const { rmpReviews: loaded } = useReviews();
+    const { rmpReviews, rmpSummary, rmpComplete, loadRmpReviews, removeRmpReview } = useReviews();
     const { course, term } = useCourse();
     const [instructor, setInstructor] = useState(ALL);
-    const [hidden, setHidden] = useState<string[]>([]);
     const signedIn = Boolean(useUser());
     const isModerator = useIsModerator();
-    const rmpReviews = loaded.filter((review) => !hidden.includes(review.id));
     const shown = instructor === ALL ? rmpReviews : rmpReviews.filter((review) => review.instructor === instructor);
     const page = usePaged(shown, PAGE_SIZE);
 
-    if (rmpReviews.length === 0) return null;
+    // Only the first page came with the course page; this tab is where the rest are read.
+    useEffect(() => {
+        if (!rmpComplete) void loadRmpReviews();
+    }, [rmpComplete, loadRmpReviews]);
+
+    if (rmpSummary.total === 0 || !rmpSummary.years) return null;
 
     // People teaching the term on the page come first, then whoever has the most reviews.
     const teaching = course.instructorsByTerm[term] ?? [];
-    const counts = new Map<string, number>();
-    for (const review of rmpReviews) counts.set(review.instructor, (counts.get(review.instructor) ?? 0) + 1);
+    const reviewed = new Map(rmpSummary.instructors.map((entry) => [entry.name, entry]));
     const isTeaching = (name: string) => teaching.some((current) => isSameInstructor(current, name));
-    const instructors = [...counts.keys()].sort(
-        (a, b) => Number(isTeaching(b)) - Number(isTeaching(a)) || counts.get(b)! - counts.get(a)!,
+    const instructors = [...reviewed.keys()].sort(
+        (a, b) => Number(isTeaching(b)) - Number(isTeaching(a)) || reviewed.get(b)!.count - reviewed.get(a)!.count,
     );
-    const years = rmpReviews.map((review) => new Date(review.reviewed_at).getFullYear());
-    const [newest, oldest] = [Math.max(...years), Math.min(...years)];
+    const { newest, oldest } = rmpSummary.years;
+    // Counted from the summary, so "Show more" is there (and retries) while the rest are still loading.
+    const expected = instructor === ALL ? rmpSummary.total : (reviewed.get(instructor)?.count ?? 0);
+    const more = Math.min(PAGE_SIZE, Math.max(0, expected - page.visible.length));
 
     return (
         <section className="mt-12">
@@ -206,7 +212,7 @@ export function RmpReviews() {
                             <SelectItem value={ALL}>All instructors</SelectItem>
                             {instructors.map((name) => (
                                 <SelectItem key={name} value={name}>
-                                    {name} ({counts.get(name)}){isTeaching(name) && `, teaching ${termLabel(term)}`}
+                                    {name} ({reviewed.get(name)!.count}){isTeaching(name) && `, teaching ${termLabel(term)}`}
                                 </SelectItem>
                             ))}
                         </SelectContent>
@@ -214,12 +220,16 @@ export function RmpReviews() {
                 )}
             </SectionHeader>
             <p className="mt-1.5 max-w-[42rem] text-[13px] text-fg-subtle">
-                {rmpReviews.length} {rmpReviews.length === 1 ? "review" : "reviews"}
+                {rmpSummary.total} {rmpSummary.total === 1 ? "review" : "reviews"}
                 {oldest === newest ? ` from ${newest}` : ` from ${oldest} to ${newest}`} that name this course. Quality
                 rates the professor, not the course.
             </p>
             <div className="mt-5">
-                <RmpScoresSummary reviews={shown} />
+                <RmpScoresSummary
+                    averages={
+                        instructor === ALL ? rmpSummary.averages : (reviewed.get(instructor)?.averages ?? NO_SCORES)
+                    }
+                />
             </div>
             <div className="mt-3">
                 {page.visible.map((review) => (
@@ -231,13 +241,20 @@ export function RmpReviews() {
                                 review={review}
                                 signedIn={signedIn}
                                 isModerator={isModerator}
-                                onHidden={() => setHidden((current) => [...current, review.id])}
+                                onHidden={() => removeRmpReview(review.id)}
                             />
                         }
                     />
                 ))}
             </div>
-            <ShowMore className="mt-2 justify-start" count={page.nextPageSize} onClick={page.showMore} />
+            <ShowMore
+                className="mt-2 justify-start"
+                count={more}
+                onClick={() => {
+                    page.showMore();
+                    if (!rmpComplete) void loadRmpReviews();
+                }}
+            />
         </section>
     );
 }

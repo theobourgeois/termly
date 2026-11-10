@@ -16,6 +16,7 @@ import { CourseReviews } from "@/components/reviews/course-reviews";
 import { ReviewsProvider } from "@/components/reviews/reviews-context";
 import { RmpReviews } from "@/components/reviews/rmp-reviews";
 import { getRmpReviews, getSyllabi } from "@/lib/course-content";
+import { RMP_PREVIEW_SIZE, summarizeRmp } from "@/lib/rmp-reviews";
 import { defaultCourseTerm, offeredTerms } from "@/lib/course";
 import {
     getCourse,
@@ -132,7 +133,12 @@ export default async function CoursePage({ params }: Props) {
                 offered={offered}
                 initialTerm={defaultCourseTerm(offered, currentTerm, listed)}
             >
-                <ReviewsProvider courseId={code} instructors={instructors} rmpReviews={rmpReviews}>
+                <ReviewsProvider
+                    courseId={code}
+                    instructors={instructors}
+                    rmpReviews={rmpReviews.slice(0, RMP_PREVIEW_SIZE)}
+                    rmpSummary={summarizeRmp(rmpReviews)}
+                >
                     <PageHeader title={formatCourseCode(code)} subtitle={course.title} />
                     <CourseActions title={`${formatCourseCode(code)} ${course.title}`} />
                     <CourseTabs

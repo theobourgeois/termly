@@ -19,7 +19,7 @@ export function useTermSchedule(term?: Term) {
     const activeTerm = term ?? plannedTerm;
     const sessions = useTermSessions(activeTerm);
     const ready = useHydrated(useScheduleStoreApi());
-    const { byCode } = useCourseIndex();
+    const { byCode, loaded } = useCourseIndex();
 
     return useMemo(() => {
         const codes = scheduledCourses(sessions);
@@ -32,9 +32,10 @@ export function useTermSchedule(term?: Term) {
             colors: courseColors(codes),
             conflicts,
             conflicted: new Set(conflicts.flatMap(({ first, second }) => [first.course, second.course])),
-            credits: totalCredits(sessions, (code) => byCode.get(code)?.creditHours),
+            // Unknown until the course index has loaded.
+            credits: loaded ? totalCredits(sessions, (code) => byCode.get(code)?.creditHours) : null,
         };
-    }, [ready, activeTerm, sessions, byCode]);
+    }, [ready, activeTerm, sessions, byCode, loaded]);
 }
 
 export type TermSchedule = ReturnType<typeof useTermSchedule>;

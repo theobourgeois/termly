@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { accentCss } from "@/lib/accent";
 import { AppShell } from "@/components/layout/app-shell";
 import { UniversityProviders } from "@/components/providers";
-import { getCourseIndex, getCurrentTerm, getTerms } from "@/lib/data";
+import { getCurrentTerm, getTerms } from "@/lib/data";
 import { getUniversity } from "@/lib/university";
 
 type Props = { children: React.ReactNode; params: Promise<{ university: string }> };
@@ -30,22 +30,13 @@ export default async function UniversityLayout({ children, params }: Props) {
     const { university } = await params;
     const info = getUniversity(university);
     if (!info) notFound();
-    const [courseIndex, terms, currentTerm] = await Promise.all([
-        getCourseIndex(university),
-        getTerms(university),
-        getCurrentTerm(university),
-    ]);
+    const [terms, currentTerm] = await Promise.all([getTerms(university), getCurrentTerm(university)]);
 
     return (
         <>
             {/* Not in a wrapper's style, so menus and dialogs rendered outside the page get the accent too. */}
             <style dangerouslySetInnerHTML={{ __html: accentCss(info.accent) }} />
-            <UniversityProviders
-                university={university}
-                courseIndex={courseIndex}
-                terms={terms}
-                currentTerm={currentTerm}
-            >
+            <UniversityProviders university={university} terms={terms} currentTerm={currentTerm}>
                 <AppShell>{children}</AppShell>
             </UniversityProviders>
         </>
