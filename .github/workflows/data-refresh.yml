@@ -99,7 +99,8 @@ jobs:
         run: node src/scripts/node/triage.js
 
   # Each university's catalog as one file, once the refreshes are done so these reads don't compete
-  # with them. See src/scripts/node/publish-catalogs.js.
+  # with them. Reviews and syllabi only after the weekly refresh, which is when they change: every
+  # read counts against Supabase's egress quota. See src/scripts/node/publish-catalogs.js.
   publish:
     needs: refresh
     if: ${{ always() }}
@@ -113,11 +114,12 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-        run: node src/scripts/node/publish-catalogs.js
+          FULL: ${{ github.event.schedule == '0 9 * * 1' || inputs.full == true }}
+        run: node src/scripts/node/publish-catalogs.js ${{ env.FULL == 'true' && '--content' || '' }}
 
   # A new deployment picks up the catalog files, and starts with no cached pages. Without the
-  # VERCEL_DEPLOY_HOOK secret, pages are refreshed in place and still read Supabase. Without
-  # REVALIDATE_SECRET and SITE_URL either, they refresh within a day.
+  # VERCEL_DEPLOY_HOOK secret, pages are refreshed in place and keep the files they were built with.
+  # Without REVALIDATE_SECRET and SITE_URL either, they refresh within a day.
   revalidate:
     needs: [refresh, publish]
     if: ${{ always() }}
