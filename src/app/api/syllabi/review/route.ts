@@ -1,4 +1,5 @@
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+import { courseContentTag } from "@/lib/course-content";
 import { NextResponse } from "next/server";
 import { getSession, isModerator } from "@/lib/auth";
 import { adminClient } from "@/lib/supabase/admin";
@@ -63,6 +64,8 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   await admin.from("syllabus_uploads").update({ status: "approved", ...reviewed }).eq("id", id);
+  // Course pages read syllabi from a file; this makes them check for ones published since.
+  revalidateTag(courseContentTag(upload.university_id));
   for (const code of courseCodes) {
     revalidatePath(`/${upload.university_id}/${code}`);
     revalidatePath(universityPath(upload.university_id, `/${code}`));

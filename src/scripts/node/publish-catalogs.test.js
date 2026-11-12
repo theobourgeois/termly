@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CATALOG_SOURCES } from "../../lib/catalog-sources.mjs";
-import { assertPublishable, readCatalog } from "./publish-catalogs.js";
+import { CATALOG_SOURCES, CONTENT_SOURCES } from "../../lib/catalog-sources.mjs";
+import { assertPublishable, readCatalog, readContent } from "./publish-catalogs.js";
 
 function fakeDb() {
     const calls = [];
@@ -34,4 +34,17 @@ test("won't replace a file with a catalog the site couldn't show", () => {
     assert.throws(() => assertPublishable("dal", { ...rows, terms: [{ is_listed: false }] }), /no terms/);
     assert.throws(() => assertPublishable("dal", { ...rows, courses: [] }), /no courses/);
     assert.throws(() => assertPublishable("dal", { ...rows, sections: [] }), /no sections/);
+});
+
+test("reads the university's visible RateMyProfessors reviews and its syllabi", async () => {
+    const db = fakeDb();
+    const before = new Date().toISOString();
+    const content = await readContent(db, "dal");
+    assert.deepEqual(Object.keys(content), ["generatedAt", ...Object.keys(CONTENT_SOURCES)]);
+    assert.ok(content.generatedAt >= before);
+    for (const { filters } of db.calls) assert.equal(filters.university_id, "eq.dal");
+    const reviews = db.calls.find(({ table }) => table === "external_reviews");
+    assert.equal(reviews.filters.source, "eq.rmp");
+    assert.equal(reviews.filters.hidden_at, "is.null");
+    assert.match(reviews.columns, /^course_code,/);
 });
