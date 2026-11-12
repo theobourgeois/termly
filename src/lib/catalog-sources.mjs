@@ -1,6 +1,6 @@
 /**
- * What makes up a university's catalog, read by the site (src/lib/data.ts) when a deployment has no
- * catalog file for that university, and by src/scripts/node/publish-catalogs.js to write those files.
+ * What makes up a university's catalog, read by src/scripts/node/publish-catalogs.js to write the
+ * catalog files, and by the site (src/lib/data.ts) in development, where there are no files.
  * Plain JavaScript because both import it.
  */
 export const CATALOG_SOURCES = {
@@ -35,9 +35,36 @@ export const CATALOG_SOURCES = {
     rooms: { source: "rooms", columns: "id,campus,building,name", order: ["id"] },
 };
 
+/**
+ * What course pages show besides the catalog: RateMyProfessors reviews and syllabi. In a file of their
+ * own because they change weekly while the catalog changes daily, so the daily publish needn't read
+ * them again. `filters` are PostgREST conditions, as written in a query string.
+ */
+export const CONTENT_SOURCES = {
+    rmpReviews: {
+        source: "external_reviews",
+        columns:
+            "course_code,id,instructor,instructor_url,review_text,quality,difficulty,would_take_again,grade,tags,online,reviewed_at",
+        order: ["id"],
+        filters: { source: "eq.rmp", course_code: "not.is.null", hidden_at: "is.null" },
+    },
+    syllabi: {
+        source: "syllabi",
+        columns:
+            "id,source_url,upload_id,archived,course_codes,term_season,term_year,instructors,grading_schemes,weights_add_up,textbooks,policies,weekly_topics",
+        order: ["id"],
+    },
+};
+
 /** The bucket the files are published to, and the folder a build downloads them into. */
 export const CATALOG_BUCKET = "catalogs";
 export const CATALOG_DIRECTORY = "catalogs";
 
 /** @param {string} university */
 export const catalogFileName = (university) => `${university}.json.gz`;
+
+/** @param {string} university */
+export const contentFileName = (university) => `${university}.content.json.gz`;
+
+/** Written by the build next to the files: each university's course codes, for the sitemap and counts. */
+export const CATALOG_SUMMARY = "summary.json";
