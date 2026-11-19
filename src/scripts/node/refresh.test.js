@@ -101,7 +101,11 @@ test("does not list terms when an import fails", async () => {
 test("empty descriptions warn on full refreshes, not missing-only refreshes", async () => {
     const courses = Array.from({ length: 25 }, (_, i) => ({ code: `A${i}` }));
     const db = {
-        async selectAll() { return [...courses, { code: "KNOWN", description: "Already present" }]; },
+        // Codes only; the second read is the courses that have a description.
+        async selectAll(table, columns, filters) {
+            assert.equal(columns, "code");
+            return filters.description ? [{ code: "KNOWN" }] : [...courses, { code: "KNOWN" }];
+        },
         async rpc() { return 0; },
     };
     const scraper = {

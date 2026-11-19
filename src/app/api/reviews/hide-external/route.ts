@@ -1,4 +1,5 @@
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+import { courseContentTag } from "@/lib/course-content";
 import { universityPath } from "@/lib/university";
 import { NextResponse } from "next/server";
 import { getSession, isModerator } from "@/lib/auth";
@@ -36,6 +37,8 @@ export async function POST(req: Request) {
   // Course pages are cached for a day; drop this one so the review goes away now.
   // The page is rendered at /<university>/<code>; Dal's is also served at /<code>.
   const { university_id, course_code } = data[0];
+  // Course pages read reviews from a file; this makes them check for reviews hidden since.
+  revalidateTag(courseContentTag(university_id));
   revalidatePath(`/${university_id}/${course_code}`);
   revalidatePath(universityPath(university_id, `/${course_code}`));
 

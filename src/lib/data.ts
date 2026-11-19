@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { cache } from "react";
-import { CATALOG_SOURCES, catalogFileName } from "./catalog-sources.mjs";
+import { CATALOG_SOURCES, CATALOG_SUMMARY, catalogFileName } from "./catalog-sources.mjs";
 import { days as appDays, type Term } from "./constants";
 import type { ExamSchedule } from "./exams";
 import { summarizeRating, type RatingSummary } from "./instructors";
@@ -30,8 +30,9 @@ import type {
 } from "./types";
 
 /**
- * Server-only access to the course catalog in Supabase. The whole catalog for the university is read
- * at once (a few thousand courses), kept in memory for a few minutes, and pages pick what they need.
+ * Server-only access to the course catalog. The whole catalog for the university is read at once (a
+ * few thousand courses) from the deployment's catalog file, or from Supabase in development, kept in
+ * memory, and pages pick what they need.
  * Client components receive trimmed props (CourseSummary, CourseListItem) rather than importing this.
  */
 
@@ -39,6 +40,12 @@ const PAGE_SIZE = 1000;
 const READ_ATTEMPTS = 3;
 const FRESH_FOR_MS = 10 * 60 * 1000;
 const RETRY_AFTER_FAILURE_MS = 60 * 1000;
+/**
+ * Deployments read catalogs only from their files. Loading one from Supabase moves megabytes, and
+ * every server instance would do it, so without a file a university's pages fail instead. In
+ * development there are no files.
+ */
+const FROM_FILES = process.env.NODE_ENV === "production";
 /** A meeting this short is a one-off (a makeup class, a room change for a day), not the weekly pattern. */
 const MIN_RECURRING_DAYS = 14;
 
@@ -410,10 +417,14 @@ async function readFromFile(university: string): Promise<CatalogRows | null> {
         return JSON.parse(gunzipSync(file).toString()) as CatalogRows;
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-            console.error(`Couldn't read the ${university} catalog file; reading Supabase`, error);
+            console.error(`Couldn't read the ${university} catalog file`, error);
         }
         return null;
     }
+}
+
+function noCatalogFile(university: string): never {
+    throw new Error(`This deployment has no catalog file for ${university}; it gets one with the next refresh`);
 }
 
 async function loadCatalog(university: string): Promise<Catalog> {
@@ -427,7 +438,7 @@ async function loadCatalog(university: string): Promise<Catalog> {
         ratings: ratingRows,
         exams: examRows,
         rooms: roomRows,
-    } = file ?? (await readFromSupabase(university));
+    } = file ?? (FROM_FILES ? noCatalogFile(university) : await readFromSupabase(university));
 
     const terms = termRows.map((row) => ({
         code: row.code,
@@ -541,8 +552,22 @@ function derive<T>(catalog: Catalog, key: string, compute: () => T): T {
     return catalog.derived.get(key) as T;
 }
 
+/** Each university's course codes, written by the build next to the catalog files (download-catalogs.js). */
+let summary: Promise<Record<string, string[]>> | undefined;
+function readSummary(): Promise<Record<string, string[]>> {
+    // "catalogs" spelled out: see readFromFile.
+    summary ??= readFile(join(process.cwd(), "catalogs", CATALOG_SUMMARY), "utf8").then((text) => JSON.parse(text));
+    // A failed read is tried again by the next request rather than remembered.
+    summary.catch(() => (summary = undefined));
+    return summary;
+}
+
 /** How many courses each university has on its timetable, counted without loading their catalogs. */
 export async function getCourseCounts(): Promise<Record<string, number>> {
+    if (FROM_FILES) {
+        const summary = await readSummary();
+        return Object.fromEntries(universities.map(({ id }) => [id, summary[id]?.length ?? 0]));
+    }
     const db = publicClient();
     const counts = await Promise.all(
         universities.map(async ({ id }) => {
@@ -559,6 +584,7 @@ export async function getCourseCounts(): Promise<Record<string, number>> {
 
 /** The codes of a university's courses on its timetable, without loading its catalog (for the sitemap). */
 export async function getCourseCodes(university: string): Promise<string[]> {
+    if (FROM_FILES) return (await readSummary())[university] ?? [];
     const rows = await readAll<{ code: string }>(publicClient(), "catalog_courses", "code", university, ["code"]);
     return rows.map((row) => row.code);
 }

@@ -3,20 +3,35 @@
  * the next build downloads (download-catalogs.js) so the site reads its catalogs from disk rather
  * than from Supabase. One university failing keeps its last file and leaves the others alone.
  *
- * A file is only replaced when the catalog changed. The universities that changed are written to the
- * step's `changed` output (comma-separated), and `checked=true` once all were compared, so the
- * workflow only redeploys the site when there's something new to show: a deploy starts with no
- * cached pages, and every page crawlers visit is rendered again.
+ * A catalog file is only replaced when the catalog changed, which is checked against a small
+ * fingerprint saved beside it rather than by downloading the file again (every read counts against
+ * the free plan's egress). The universities that changed are written to the step's `changed` output
+ * (comma-separated), and `checked=true` once all were compared, so the workflow only redeploys the
+ * site when there's something new to show: a deploy starts with no cached pages, and every page
+ * crawlers visit is rendered again.
+ *
+ * With --content it also saves what course pages show besides the catalog (RateMyProfessors reviews
+ * and syllabi) as a second file. That's only needed after the weekly refresh, which is when reviews
+ * change, so the daily runs don't read them all again. A university with no content file yet gets
+ * one either way.
  *
  *     node publish-catalogs.js            # every university
  *     node publish-catalogs.js dal kpu
+ *     node publish-catalogs.js --content dal   # the catalog and the content file
  *     node publish-catalogs.js --dry-run dal   # only print each file's size
  */
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { gunzipSync, gzipSync } from "zlib";
-import { CATALOG_BUCKET, CATALOG_SOURCES, catalogFileName } from "../../lib/catalog-sources.mjs";
+import { createHash } from "crypto";
+import { gzipSync } from "zlib";
+import {
+    CATALOG_BUCKET,
+    CATALOG_SOURCES,
+    CONTENT_SOURCES,
+    catalogFileName,
+    contentFileName,
+} from "../../lib/catalog-sources.mjs";
 import { connect, loadEnv, log } from "./lib/import.js";
 
 /** The rows of every catalog source, one source at a time so a refresh's last step stays light. */
@@ -33,6 +48,18 @@ export async function readCatalog(db, university) {
     return rows;
 }
 
+/**
+ * The university's reviews and syllabi. `generatedAt` is taken before reading, so a review hidden
+ * while this runs is still caught by the site's check for changes made since (src/lib/course-content.ts).
+ */
+export async function readContent(db, university) {
+    const content = { generatedAt: new Date().toISOString() };
+    for (const [name, { source, columns, order, filters = {} }] of Object.entries(CONTENT_SOURCES)) {
+        content[name] = await db.selectAll(source, columns, { university_id: `eq.${university}`, ...filters }, order.join(","));
+    }
+    return content;
+}
+
 /** Throws rather than replace a good file with one the site couldn't show. */
 export function assertPublishable(university, rows) {
     if (!rows.terms.some((term) => term.is_listed)) throw new Error(`${university}: no terms are listed`);
@@ -41,45 +68,51 @@ export function assertPublishable(university, rows) {
 }
 
 /**
- * The catalog as a string that doesn't depend on the order rows came back in: a refresh can give
+ * A hash of the catalog that doesn't depend on the order rows came back in: a refresh can give
  * sections new ids, which reorders them without changing anything the site shows.
  */
-function fingerprint(rows) {
-    return JSON.stringify(
-        Object.keys(rows)
-            .sort()
-            .map((name) => [name, rows[name].map((row) => JSON.stringify(row)).sort()]),
-    );
+export function fingerprint(rows) {
+    const sorted = Object.keys(rows)
+        .sort()
+        .map((name) => [name, rows[name].map((row) => JSON.stringify(row)).sort()]);
+    return createHash("sha256").update(JSON.stringify(sorted)).digest("hex");
 }
 
-/** The fingerprint of the file published last time, or null when there's none (or it can't be read). */
+const storageUrl = () => `${loadEnv().NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object`;
+const fingerprintFileName = (university) => `${catalogFileName(university)}.sha256`;
+
+/** The fingerprint saved with the file published last time, or null when there's none (or it can't be read). */
 async function publishedFingerprint(university) {
-    const url = loadEnv().NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, "");
     try {
         // The query skips any copy a CDN kept.
-        const response = await fetch(
-            `${url}/storage/v1/object/public/${CATALOG_BUCKET}/${catalogFileName(university)}?v=${Date.now()}`,
-            { signal: AbortSignal.timeout(60_000) },
-        );
-        if (!response.ok) return null;
-        return fingerprint(JSON.parse(gunzipSync(Buffer.from(await response.arrayBuffer())).toString()));
+        const response = await fetch(`${storageUrl()}/public/${CATALOG_BUCKET}/${fingerprintFileName(university)}?v=${Date.now()}`, {
+            signal: AbortSignal.timeout(60_000),
+        });
+        return response.ok ? (await response.text()).trim() : null;
     } catch {
         return null;
     }
 }
 
-async function upload(university, file) {
+/** Whether the bucket has the file. When Storage doesn't say, assumes it does, so nothing is read for it. */
+async function published(name) {
+    const response = await fetch(`${storageUrl()}/public/${CATALOG_BUCKET}/${name}`, { method: "HEAD" });
+    // Storage answers a missing public file with a 400 or a 404, depending on the version.
+    return response.status !== 400 && response.status !== 404;
+}
+
+async function upload(name, file, contentType = "application/gzip") {
     const env = loadEnv();
     const key = env.SUPABASE_SECRET_KEY;
     const response = await fetch(
-        `${env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object/${CATALOG_BUCKET}/${catalogFileName(university)}`,
+        `${storageUrl()}/${CATALOG_BUCKET}/${name}`,
         {
             method: "POST",
             headers: {
                 apikey: key,
                 // Legacy service_role keys are JWTs and go in the Authorization header too.
                 ...(key.startsWith("eyJ") ? { Authorization: `Bearer ${key}` } : {}),
-                "Content-Type": "application/gzip",
+                "Content-Type": contentType,
                 "Cache-Control": "max-age=60",
                 "x-upsert": "true",
             },
@@ -92,6 +125,7 @@ async function upload(university, file) {
 async function main() {
     const args = process.argv.slice(2);
     const dryRun = args.includes("--dry-run");
+    const withContent = args.includes("--content");
     const scrapers = path.join(path.dirname(fileURLToPath(import.meta.url)), "universities");
     const named = args.filter((arg) => !arg.startsWith("--"));
     const ids = named.length
@@ -100,28 +134,45 @@ async function main() {
 
     const db = connect({ readOnly: dryRun });
     let errors = 0;
-    const changed = [];
+    const changed = new Set();
     for (const university of ids) {
         try {
             const rows = await readCatalog(db, university);
             assertPublishable(university, rows);
             const summary = `${rows.courses.length} courses, ${rows.sections.length} sections`;
-            if (fingerprint(rows) === (await publishedFingerprint(university))) {
+            const hash = fingerprint(rows);
+            if (hash === (await publishedFingerprint(university))) {
                 log(`${university}: ${summary}, unchanged`);
-                continue;
+            } else {
+                const file = gzipSync(JSON.stringify(rows), { level: 9 });
+                if (!dryRun) {
+                    await upload(catalogFileName(university), file);
+                    // Saved after the catalog, so a failed upload is retried on the next run.
+                    await upload(fingerprintFileName(university), hash, "text/plain");
+                }
+                changed.add(university);
+                log(`${university}: ${summary}, ${(file.length / 1024).toFixed(0)} KiB`);
             }
-            const file = gzipSync(JSON.stringify(rows), { level: 9 });
-            if (!dryRun) await upload(university, file);
-            changed.push(university);
-            log(`${university}: ${summary}, ${(file.length / 1024).toFixed(0)} KiB`);
         } catch (error) {
             errors++;
             log(`${university}: keeping its last file: ${error.message}`);
         }
+        try {
+            if (!withContent && (await published(contentFileName(university)))) continue;
+            const content = await readContent(db, university);
+            const file = gzipSync(JSON.stringify(content), { level: 9 });
+            if (!dryRun) await upload(contentFileName(university), file);
+            changed.add(university);
+            log(`${university}: ${content.rmpReviews.length} reviews, ${content.syllabi.length} syllabi, ${(file.length / 1024).toFixed(0)} KiB`);
+        } catch (error) {
+            errors++;
+            log(`${university}: keeping its last content file: ${error.message}`);
+        }
     }
-    log(changed.length ? `Changed: ${changed.join(", ")}` : "No catalog changed");
+    const list = [...changed].join(",");
+    log(list ? `Changed: ${list}` : "Nothing changed");
     if (process.env.GITHUB_OUTPUT && !dryRun) {
-        fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed.join(",")}\nchecked=true\n`);
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${list}\nchecked=true\n`);
     }
     if (errors) process.exit(1);
 }

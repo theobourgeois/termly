@@ -171,9 +171,14 @@ export async function importDetails(db, university, scraper, timetable, mode) {
         return [];
     }
 
-    const stored = await db.selectAll("courses", "code,description", { university_id: `eq.${university}` }, "code");
+    // Codes only: reading the descriptions themselves every day would count against Supabase's egress.
+    const filter = { university_id: `eq.${university}` };
+    const [stored, described] = await Promise.all([
+        db.selectAll("courses", "code", filter, "code"),
+        db.selectAll("courses", "code", { ...filter, description: "neq." }, "code"),
+    ]);
     const knownCodes = new Set(stored.map((course) => course.code));
-    const withDescription = new Set(stored.filter((course) => course.description).map((course) => course.code));
+    const withDescription = new Set(described.map((course) => course.code));
     const courses = timetable.courses.filter((course) => mode === "all" || !withDescription.has(course.code));
     log(`Fetching details for ${courses.length} courses`);
 
