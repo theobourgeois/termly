@@ -34,9 +34,9 @@ import { getUniversity, universityPath } from "@/lib/university";
 type Props = { params: Promise<{ university: string; course: string }> };
 
 /**
- * No course is built ahead; each renders on its first visit and is cached from then on (revalidated
- * daily, and when a moderator changes its reviews or syllabi). Without this the page renders on every
- * request, loading the whole catalog on whichever server instance gets it.
+ * No course is built ahead; each renders on its first visit and is cached from then on (until the next
+ * deploy, for a week at most, or until a moderator changes its reviews or syllabi). Without this the
+ * page renders on every request, loading the whole catalog on whichever server instance gets it.
  */
 export function generateStaticParams() {
     return [];

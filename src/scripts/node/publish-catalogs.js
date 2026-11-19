@@ -3,6 +3,11 @@
  * the next build downloads (download-catalogs.js) so the site reads its catalogs from disk rather
  * than from Supabase. One university failing keeps its last file and leaves the others alone.
  *
+ * A file is only replaced when the catalog changed. The universities that changed are written to the
+ * step's `changed` output (comma-separated), and `checked=true` once all were compared, so the
+ * workflow only redeploys the site when there's something new to show: a deploy starts with no
+ * cached pages, and every page crawlers visit is rendered again.
+ *
  *     node publish-catalogs.js            # every university
  *     node publish-catalogs.js dal kpu
  *     node publish-catalogs.js --dry-run dal   # only print each file's size
@@ -10,7 +15,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { gzipSync } from "zlib";
+import { gunzipSync, gzipSync } from "zlib";
 import { CATALOG_BUCKET, CATALOG_SOURCES, catalogFileName } from "../../lib/catalog-sources.mjs";
 import { connect, loadEnv, log } from "./lib/import.js";
 
@@ -33,6 +38,34 @@ export function assertPublishable(university, rows) {
     if (!rows.terms.some((term) => term.is_listed)) throw new Error(`${university}: no terms are listed`);
     if (rows.courses.length === 0) throw new Error(`${university}: no courses`);
     if (rows.sections.length === 0) throw new Error(`${university}: no sections`);
+}
+
+/**
+ * The catalog as a string that doesn't depend on the order rows came back in: a refresh can give
+ * sections new ids, which reorders them without changing anything the site shows.
+ */
+function fingerprint(rows) {
+    return JSON.stringify(
+        Object.keys(rows)
+            .sort()
+            .map((name) => [name, rows[name].map((row) => JSON.stringify(row)).sort()]),
+    );
+}
+
+/** The fingerprint of the file published last time, or null when there's none (or it can't be read). */
+async function publishedFingerprint(university) {
+    const url = loadEnv().NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, "");
+    try {
+        // The query skips any copy a CDN kept.
+        const response = await fetch(
+            `${url}/storage/v1/object/public/${CATALOG_BUCKET}/${catalogFileName(university)}?v=${Date.now()}`,
+            { signal: AbortSignal.timeout(60_000) },
+        );
+        if (!response.ok) return null;
+        return fingerprint(JSON.parse(gunzipSync(Buffer.from(await response.arrayBuffer())).toString()));
+    } catch {
+        return null;
+    }
 }
 
 async function upload(university, file) {
@@ -67,17 +100,28 @@ async function main() {
 
     const db = connect({ readOnly: dryRun });
     let errors = 0;
+    const changed = [];
     for (const university of ids) {
         try {
             const rows = await readCatalog(db, university);
             assertPublishable(university, rows);
+            const summary = `${rows.courses.length} courses, ${rows.sections.length} sections`;
+            if (fingerprint(rows) === (await publishedFingerprint(university))) {
+                log(`${university}: ${summary}, unchanged`);
+                continue;
+            }
             const file = gzipSync(JSON.stringify(rows), { level: 9 });
             if (!dryRun) await upload(university, file);
-            log(`${university}: ${rows.courses.length} courses, ${rows.sections.length} sections, ${(file.length / 1024).toFixed(0)} KiB`);
+            changed.push(university);
+            log(`${university}: ${summary}, ${(file.length / 1024).toFixed(0)} KiB`);
         } catch (error) {
             errors++;
             log(`${university}: keeping its last file: ${error.message}`);
         }
+    }
+    log(changed.length ? `Changed: ${changed.join(", ")}` : "No catalog changed");
+    if (process.env.GITHUB_OUTPUT && !dryRun) {
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed.join(",")}\nchecked=true\n`);
     }
     if (errors) process.exit(1);
 }
