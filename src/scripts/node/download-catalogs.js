@@ -1,7 +1,9 @@
 /**
  * Runs before `next build`. Downloads each university's catalog file (publish-catalogs.js) into the
- * deployment, so serving the site doesn't read catalogs from Supabase. Never fails the build: a
- * university without a file is read from Supabase instead, as a new one is until its first refresh.
+ * deployment, so serving the site doesn't read catalogs from Supabase. A university without a file
+ * is read from Supabase instead, as a new one is until its first refresh. But when no file at all can
+ * be downloaded, Supabase is down or refusing requests, and pages couldn't read it either: the build
+ * fails so the deployment already live keeps serving.
  */
 import fs from "fs";
 import path from "path";
@@ -44,6 +46,10 @@ async function main() {
         }),
     );
     log(`Downloaded ${ids.length - missing.length} of ${ids.length} catalog files, ${(bytes / 1024 / 1024).toFixed(1)} MiB`);
+    if (ids.length > 0 && missing.length === ids.length) {
+        console.error(`Couldn't download any catalog file: ${missing.join(", ")}`);
+        process.exit(1);
+    }
     if (missing.length) log(`Will read these from Supabase: ${missing.join(", ")}`);
 }
 

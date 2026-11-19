@@ -104,20 +104,29 @@ jobs:
     needs: refresh
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    outputs:
+      # The universities whose catalog changed, comma-separated; empty when none did. `checked` is
+      # "true" once every university was compared, even if some couldn't be published.
+      changed: ${{ steps.publish.outputs.changed }}
+      checked: ${{ steps.publish.outputs.checked }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 24
       - name: Publish the catalog files
+        id: publish
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: node src/scripts/node/publish-catalogs.js
 
-  # A new deployment picks up the catalog files, and starts with no cached pages. Without the
-  # VERCEL_DEPLOY_HOOK secret, pages are refreshed in place and still read Supabase. Without
-  # REVALIDATE_SECRET and SITE_URL either, they refresh within a day.
+  # A new deployment picks up the catalog files, and starts with no cached pages: every page is
+  # rendered again as it's visited, which is most of what the site costs to run. So the site is only
+  # redeployed when a catalog changed, or after the weekly run (it refreshes RateMyProfessors
+  # reviews, which pages read from Supabase rather than from the catalog files). Without the
+  # VERCEL_DEPLOY_HOOK secret, only the changed universities' pages are refreshed in place, and
+  # without REVALIDATE_SECRET and SITE_URL either, they refresh within a week.
   revalidate:
     needs: [refresh, publish]
     if: ${{ always() }}
@@ -128,13 +137,27 @@ jobs:
           VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
           REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
           SITE_URL: ${{ secrets.SITE_URL }}
+          FULL: ${{ github.event.schedule == '0 9 * * 1' || inputs.full == true }}
+          CHANGED: ${{ needs.publish.outputs.changed }}
+          # If publishing stopped partway, what changed isn't known, so the site is refreshed anyway.
+          PUBLISHED: ${{ needs.publish.outputs.checked == 'true' }}
         run: |
+          if [ "$FULL" != "true" ] && [ "$PUBLISHED" = "true" ] && [ -z "$CHANGED" ]; then
+            echo "No catalog changed; the site is left as it is"
+            exit 0
+          fi
           if [ -n "$VERCEL_DEPLOY_HOOK" ]; then
             curl --fail --silent --show-error -X POST "$VERCEL_DEPLOY_HOOK"
             exit 0
           fi
           if [ -z "$REVALIDATE_SECRET" ] || [ -z "$SITE_URL" ]; then
-            echo "REVALIDATE_SECRET or SITE_URL isn't set; pages refresh within a day"
+            echo "REVALIDATE_SECRET or SITE_URL isn't set; pages refresh within a week"
             exit 0
           fi
-          curl --fail --silent --show-error -X POST "$SITE_URL/api/revalidate" -H "Authorization: Bearer $REVALIDATE_SECRET"
+          # Every university after the weekly run or a failed publish, otherwise only the changed ones.
+          body='{}'
+          if [ "$FULL" != "true" ] && [ "$PUBLISHED" = "true" ]; then
+            body=$(jq -cn --arg changed "$CHANGED" '{universities: ($changed | split(","))}')
+          fi
+          curl --fail --silent --show-error -X POST "$SITE_URL/api/revalidate" \
+            -H "Authorization: Bearer $REVALIDATE_SECRET" -H "Content-Type: application/json" -d "$body"

@@ -18,6 +18,13 @@ export async function generateMetadata({ params }: { params: Promise<{ universit
     });
 }
 
+/**
+ * Rendered on every request: what's free depends on the time, and the room and term are in the query.
+ * Without this the page counts as static (its layout's generateStaticParams), and reading the query at
+ * request time fails the render.
+ */
+export const dynamic = "force-dynamic";
+
 type Props = {
     params: Promise<{ university: string }>;
     searchParams: Promise<{ room?: string; term?: string }>;

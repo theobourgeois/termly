@@ -530,9 +530,9 @@ function currentCatalog(university: string): Promise<Catalog> {
 
 const getCatalog = cache(currentCatalog);
 
-/** Forgets the in-memory catalogs so the next request reads them again (after a data refresh). */
-export function clearCatalog() {
-    snapshots.clear();
+/** Forgets these universities' in-memory catalogs so the next request reads them again (after a data refresh). */
+export function clearCatalog(ids: string[]) {
+    for (const id of ids) snapshots.delete(id);
 }
 
 /** Computes something from the catalog once per catalog load. */

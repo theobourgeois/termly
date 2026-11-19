@@ -30,12 +30,12 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Match all request paths except:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - images - .svg, .png, .jpg, .jpeg, .gif, .webp
+     * Pages only; every request it runs on is billed, and crawlers make most of them. Not:
+     * - _next/static, _next/image: the app's files and optimized images
+     * - api/: API routes read the session themselves, and serve the same on the old hosts
+     * - opengraph-image: social images (any page's)
+     * - files: robots.txt, sitemap.xml, manifest.json, icons, images, fonts
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|api/|(?:.*/)?opengraph-image$|.*\\.(?:ico|svg|png|jpg|jpeg|gif|webp|txt|xml|json|webmanifest|woff2?)$).*)",
   ],
 }
