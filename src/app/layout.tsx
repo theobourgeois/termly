@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     applicationName: SITE_NAME,
     referrer: "origin-when-cross-origin",
     openGraph: { type: "website", locale: "en_CA", siteName: SITE_NAME },
-    // The SVG follows the browser's light or dark theme; the .ico is for browsers without SVG icons.
+    // Always black, so it reads on light tab bars even in dark mode; the .ico is for browsers without SVG icons.
     icons: {
         icon: [
             { url: "/icon.svg", type: "image/svg+xml" },
