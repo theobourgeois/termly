@@ -24,7 +24,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createHash } from "crypto";
-import { gzipSync } from "zlib";
+import { gunzipSync, gzipSync } from "zlib";
 import {
     CATALOG_BUCKET,
     CATALOG_SOURCES,
@@ -79,7 +79,8 @@ export function fingerprint(rows) {
 }
 
 const storageUrl = () => `${loadEnv().NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object`;
-const fingerprintFileName = (university) => `${catalogFileName(university)}.sha256`;
+// Gzipped like the catalogs, since the bucket only takes application/gzip.
+const fingerprintFileName = (university) => `${university}.sha256.gz`;
 
 /** The fingerprint saved with the file published last time, or null when there's none (or it can't be read). */
 async function publishedFingerprint(university) {
@@ -88,7 +89,7 @@ async function publishedFingerprint(university) {
         const response = await fetch(`${storageUrl()}/public/${CATALOG_BUCKET}/${fingerprintFileName(university)}?v=${Date.now()}`, {
             signal: AbortSignal.timeout(60_000),
         });
-        return response.ok ? (await response.text()).trim() : null;
+        return response.ok ? gunzipSync(Buffer.from(await response.arrayBuffer())).toString().trim() : null;
     } catch {
         return null;
     }
@@ -101,7 +102,7 @@ async function published(name) {
     return response.status !== 400 && response.status !== 404;
 }
 
-async function upload(name, file, contentType = "application/gzip") {
+async function upload(name, file) {
     const env = loadEnv();
     const key = env.SUPABASE_SECRET_KEY;
     const response = await fetch(
@@ -112,7 +113,7 @@ async function upload(name, file, contentType = "application/gzip") {
                 apikey: key,
                 // Legacy service_role keys are JWTs and go in the Authorization header too.
                 ...(key.startsWith("eyJ") ? { Authorization: `Bearer ${key}` } : {}),
-                "Content-Type": contentType,
+                "Content-Type": "application/gzip",
                 "Cache-Control": "max-age=60",
                 "x-upsert": "true",
             },
@@ -145,13 +146,11 @@ async function main() {
                 log(`${university}: ${summary}, unchanged`);
             } else {
                 const file = gzipSync(JSON.stringify(rows), { level: 9 });
-                if (!dryRun) {
-                    await upload(catalogFileName(university), file);
-                    // Saved after the catalog, so a failed upload is retried on the next run.
-                    await upload(fingerprintFileName(university), hash, "text/plain");
-                }
+                if (!dryRun) await upload(catalogFileName(university), file);
                 changed.add(university);
                 log(`${university}: ${summary}, ${(file.length / 1024).toFixed(0)} KiB`);
+                // Saved after the catalog, so a failed upload is retried on the next run.
+                if (!dryRun) await upload(fingerprintFileName(university), gzipSync(hash));
             }
         } catch (error) {
             errors++;

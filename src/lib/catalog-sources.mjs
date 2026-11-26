@@ -45,7 +45,10 @@ export const CONTENT_SOURCES = {
         source: "external_reviews",
         columns:
             "course_code,id,instructor,instructor_url,review_text,quality,difficulty,would_take_again,grade,tags,online,reviewed_at",
-        order: ["id"],
+        // The order of the (university_id, course_code, reviewed_at desc) index, so each page is read
+        // off it. Ordered by id, every page sorted all of a university's reviews, and the big ones
+        // timed out; id only breaks ties.
+        order: ["course_code", "reviewed_at.desc", "id"],
         filters: { source: "eq.rmp", course_code: "not.is.null", hidden_at: "is.null" },
     },
     syllabi: {
